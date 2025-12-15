@@ -2,10 +2,10 @@
 
 Ce dépôt contient les travaux pratiques et le code source réalisés dans le cadre du projet d'Optimisation du Master MPRO (2025-2026).
 
-**Auteurs :** * Bedis BACCAR
-* Rayen SELMI
+**Auteurs :**  Bedis BACCAR
+ Rayen SELMI
 
-**Encadrant :** * Professeur Zacharie ALES
+**Encadrant :**  Professeur Zacharie ALES
 
 ## Description du projet
 
