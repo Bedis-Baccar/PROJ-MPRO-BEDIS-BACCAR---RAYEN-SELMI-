@@ -20,5 +20,5 @@ Conformément au sujet, nous avons implémenté et comparé les approches suivan
 3. **Dualisation** du problème robuste
 4. **Approche Heuristique** / Formulation non compacte
 
----
+----
 *Projet ECMA 2025-2026*
