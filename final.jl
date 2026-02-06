@@ -58,7 +58,7 @@ function parse_coordinates(lines::Vector{String}, start_idx::Int)
 end
 
 function read_instance_file(filepath::String)
-    println("📂 Lecture du fichier : $filepath")
+    println(" Lecture du fichier : $filepath")
     
     if !isfile(filepath)
         error("Le fichier $filepath n'existe pas")
@@ -183,110 +183,90 @@ Le diagramme montre le nombre d'instances résolues en fonction du temps (courbe
 - `output_file`: Nom du fichier de sortie (PNG)
 """
 function plot_performance_profile(all_results::Dict, output_file::String="performance_profile.png")
+    # 1. Calculer le temps total MAX parmi toutes les méthodes pour dimensionner l'axe X
+    max_total_time = 0.0
+    
+    for method in keys(all_results)
+        # On ne garde que les temps des succès pour le cumul
+        valid_times = [r[1] for r in all_results[method] if r[2] == MOI.OPTIMAL || r[2] == MOI.TIME_LIMIT]
+        # On suppose qu'on les résout du plus rapide au plus lent
+        sort!(valid_times)
+        if !isempty(valid_times)
+            total_time = sum(valid_times)
+            if total_time > max_total_time
+                max_total_time = total_time
+            end
+        end
+    end
+    
+    limit_x = max_total_time * 1.05 # +5% de marge
+
     # Créer le graphique
     p = plot(
-        xlabel="Temps (s)",
+        xlabel="Temps Cumulé (s)", # Changement de label
         ylabel="Nombre d'instances résolues",
-        title="Diagramme de Performances",
+        title="Efficacité Globale (Temps Cumulé)",
         legend=:bottomright,
         size=(900, 600),
         grid=true,
         gridstyle=:dash,
-        gridalpha=0.3
+        gridalpha=0.3,
+        xlims=(0, limit_x)
     )
     
-    # Couleurs et styles pour chaque méthode
     colors = [:blue, :green, :orange, :purple, :red, :brown]
-    markers = [:circle, :square, :diamond, :utriangle, :star5, :cross]
-    
     method_names = collect(keys(all_results))
     
-    # Pour chaque méthode, créer la courbe en escalier
     for (idx, method) in enumerate(method_names)
         results = all_results[method]
         
-        # Trier par temps
-        sorted_results = sort(results, by=x -> x[1])
+        # 2. FILTRER : On ne garde que les succès
+        valid_results = filter(r -> r[2] == MOI.OPTIMAL || r[2] == MOI.TIME_LIMIT, results)
         
-        # Construire les points de la courbe en escalier
-        times = [0.0]
-        counts = [0]
+        # 3. TRIER par temps d'exécution croissant (Stratégie : on résout les faciles d'abord)
+        sort!(valid_results, by = x -> x[1])
         
-        for (i, (t, status)) in enumerate(sorted_results)
-            if status == MOI.OPTIMAL || status == MOI.TIME_LIMIT
-                push!(times, t)
-                push!(counts, i)
-            end
+        # 4. CONSTRUIRE LA COURBE CUMULATIVE
+        xs = Float64[0.0]
+        ys = Int[0]
+        
+        current_cumul = 0.0
+        
+        for (i, (t, status)) in enumerate(valid_results)
+            # On ajoute le temps de l'instance courante au total
+            new_cumul = current_cumul + t
+            
+            # Marche d'escalier :
+            # Au temps 'new_cumul', on passe de i-1 à i instances résolues
+            
+            push!(xs, new_cumul) # Point en bas de la marche (temps atteint, pas encore compté)
+            push!(ys, i-1)
+            
+            push!(xs, new_cumul) # Point en haut de la marche (temps atteint, instance comptée)
+            push!(ys, i)
+            
+            current_cumul = new_cumul
         end
         
-        # Ajouter point final
-        if length(times) > 1
-            max_time = maximum([maximum([r[1] for r in all_results[m]]) for m in method_names])
-            push!(times, max_time * 1.1)
-            push!(counts, counts[end])
+        # Prolonge la courbe jusqu'à la fin du graphique (plateau final)
+        if !isempty(xs)
+            push!(xs, limit_x)
+            push!(ys, ys[end])
         end
         
-        # Tracer la courbe
-        plot!(p, times, counts,
+        plot!(p, xs, ys,
               label=method,
               linewidth=2.5,
               color=colors[mod1(idx, length(colors))],
-              marker=markers[mod1(idx, length(markers))],
-              markersize=5,
-              markerstrokewidth=0,
-              linestyle=:solid)
-    end
-    
-    # Sauvegarder
-    savefig(p, output_file)
-    println("  📊 Diagramme de performances sauvegardé: $output_file")
-    
-    return p
-end
-
-"""
-    plot_performance_profile_single(results_dict, output_file="performance_profile.png")
-
-Version pour une seule instance - génère un diagramme simplifié.
-"""
-function plot_performance_profile_single(results_dict::Dict, output_file::String="performance_profile.png")
-    methods = collect(keys(results_dict))
-    
-    # Créer le graphique
-    p = plot(
-        xlabel="Temps (s)",
-        ylabel="Instance résolue",
-        title="Diagramme de Performances (Instance Unique)",
-        legend=:right,
-        size=(900, 600),
-        grid=true,
-        ylim=(0, 1.2)
-    )
-    
-    colors = [:blue, :green, :orange, :purple, :red, :brown]
-    
-    # Pour chaque méthode
-    for (idx, method) in enumerate(methods)
-        obj, time_val, gap, status = results_dict[method]
-        
-        # Point de succès
-        success = (status == MOI.OPTIMAL || status == MOI.TIME_LIMIT) ? 1 : 0
-        
-        # Courbe en escalier
-        plot!(p, [0, time_val, time_val * 1.5], [0, 0, success],
-              label=method,
-              linewidth=3,
-              color=colors[mod1(idx, length(colors))],
-              marker=:circle,
-              markersize=6,
               linestyle=:solid)
     end
     
     savefig(p, output_file)
-    println("  📊 Diagramme de performances sauvegardé: $output_file")
+    println("  Graphique de temps cumulé sauvegardé: $output_file")
     
     return p
-end
+
+end  
 
 """
     plot_comparative_bar_chart(results_dict, output_file="comparison_bar.png")
@@ -314,7 +294,7 @@ function plot_comparative_bar_chart(results_dict::Dict, output_file::String="com
     p = plot(p1, p2, layout=(1, 2), size=(1000, 400))
     
     savefig(p, output_file)
-    println("  📊 Diagramme comparatif sauvegardé: $output_file")
+    println("   Diagramme comparatif sauvegardé: $output_file")
     
     return p
 end
@@ -349,7 +329,7 @@ function print_solution(model, data::Instance, method_name::String)
     end
     
     if !isempty(partitions)
-        println("  📊 Partitions:")
+        println("   Partitions:")
         for (k, group) in enumerate(partitions)
             weight = sum(data.w[i] for i in group)
             println("     P$k = {$(join(group, ", "))} → poids: $(round(weight, digits=2))")
@@ -357,12 +337,12 @@ function print_solution(model, data::Instance, method_name::String)
     end
     
     obj_val = objective_value(model)
-    println("  🎯 Objectif: $(round(obj_val, digits=4))")
+    println("   Objectif: $(round(obj_val, digits=4))")
     
     try
         gap = MOI.get(model, MOI.RelativeGap())
         if gap < Inf
-            println("  📉 Gap: $(round(gap * 100, digits=2))%")
+            println("   Gap: $(round(gap * 100, digits=2))%")
         end
     catch
     end
@@ -421,11 +401,11 @@ function print_comparison_table(results::Dict)
         if length(robust_vals) >= 2
             diff = maximum(robust_vals) - minimum(robust_vals)
             if diff < 1e-4
-                println("\n✅ Convergence parfaite des méthodes robustes (écart < 0.0001)")
+                println("\n Convergence parfaite des méthodes robustes (écart < 0.0001)")
             elseif diff < 1.0
                 println("\n✓ Bonne convergence des méthodes robustes (écart: $(round(diff, digits=4)))")
             else
-                println("\n⚠️  Écart significatif entre les méthodes robustes: $(round(diff, digits=2))")
+                println("\n  Écart significatif entre les méthodes robustes: $(round(diff, digits=2))")
             end
         end
     end
@@ -449,7 +429,7 @@ function add_symmetry_breaking_constraints!(model, data::Instance)
         end
     end
     
-    println("  🔒 Contraintes de brisure de symétrie ajoutées")
+    println("   Contraintes de brisure de symétrie ajoutées")
 end
 
 # ============================================================================
@@ -484,7 +464,7 @@ function set_warm_start!(model, data::Instance, reference_model)
             set_start_value(model[:z], z_ref)
         end
         
-        println("  🚀 Solution initiale fournie (warm start activé)")
+        println("   Solution initiale fournie (warm start activé)")
         return true
     catch e
         println("  ⚠️  Erreur lors du warm start: $e")
@@ -659,7 +639,7 @@ function solve_static(data::Instance;
 end
 
 # ============================================================================
-# MÉTHODE 1 : Résolution Robuste par DUALISATION (Monolithique)
+# MÉTHODE 1 : Résolution Robuste par DUALISATION 
 # ============================================================================
 
 function solve_robust_dualization(data::Instance; 
@@ -669,55 +649,91 @@ function solve_robust_dualization(data::Instance;
                                  verbose::Bool=false)
     if verbose
         println("\n" * "="^80)
-        println(" " ^ 25 * "MÉTHODE 1 : DUALISATION (MONOLITHIQUE)")
+        println(" " ^ 25 * "MÉTHODE 1 : DUALISATION (OPTIMISÉE)")
+        println(" " ^ 20 * "(Relaxation y + Presolve Agressif)")
         println("="^80)
     end
 
     GRB_ENV = Gurobi.Env()
     model = Model(() -> Gurobi.Optimizer(GRB_ENV))
+    
+    # --- OPTIMISATION 1 : Paramètres Gurobi pour la performance ---
     set_optimizer_attribute(model, "OutputFlag", verbose ? 1 : 0)
     set_optimizer_attribute(model, "TimeLimit", time_limit)
     set_optimizer_attribute(model, "MIPGap", gap_limit)
     
+    set_optimizer_attribute(model, "Presolve", 2) 
+    set_optimizer_attribute(model, "Cuts", 2) 
+    set_optimizer_attribute(model, "Symmetry", 2)
+    set_optimizer_attribute(model, "Method", 3)
+
     n, K, B = data.n, data.K, data.B
     E = data.edges
     
+    # --- VARIABLES ---
     @variable(model, x[1:n, 1:K], Bin)
-    @variable(model, y[e in E], Bin)
+    
+    # --- OPTIMISATION 2 : Relaxation de y (Variable Continue au lieu de Binaire) ---
+
+    @variable(model, 0 <= y[e in E] <= 1) 
     
     @variable(model, λ >= 0)
     @variable(model, μ[e in E] >= 0)
     @variable(model, α[1:K] >= 0)
     @variable(model, β[1:n, 1:K] >= 0)
     
+    # --- OBJECTIF ROBUSTE ---
+    # Min (Coût nominal + Incertitude Distances)
     @objective(model, Min, 
         sum(data.l[e] * y[e] for e in E) +
         data.L * λ +
         sum(3.0 * μ[e] for e in E)
     )
     
+    # --- CONTRAINTES ---
+    
+    # 1. Partitionnement : chaque nœud dans exactement un groupe
     @constraint(model, [i=1:n], sum(x[i,k] for k in 1:K) == 1)
+    
+    # 2. Lien x-y (Linéarisation)
+    # Si i et j sont dans k, alors y_e doit être 1.
     @constraint(model, [e in E, k in 1:K], y[e] >= x[e[1], k] + x[e[2], k] - 1)
     
+    # 3. Contrainte Duale Distances (Incertitude Objectif)
     @constraint(model, [e in E], λ + μ[e] >= (data.l_hat[e[1]] + data.l_hat[e[2]]) * y[e])
+    
+    # 4. Contrainte Duale Poids (Capacité Robuste)
     @constraint(model, [k=1:K],
-        sum(data.w[i] * x[i,k] for i in 1:n) +
-        data.W * α[k] +
-        sum(data.W_v[i] * β[i,k] for i in 1:n)
+        sum(data.w[i] * x[i,k] for i in 1:n) +    # Poids nominal
+        data.W * α[k] +                           # Budget global incertitude poids
+        sum(data.W_v[i] * β[i,k] for i in 1:n)    # Budget local
         <= B
     )
+    
+    # 5. Lien Dualité Poids
     @constraint(model, [i=1:n, k=1:K], α[k] + β[i,k] >= data.w[i] * x[i,k])
     
-    add_symmetry_breaking_constraints!(model, data)
+    # --- OPTIMISATION 3 : Symétrie minimale ---
+
+    @constraint(model, x[1, 1] == 1)
     
-    if warm_start_model !== nothing
-        set_warm_start!(model, data, warm_start_model)
+    # Warm Start
+    if warm_start_model !== nothing && has_values(warm_start_model)
+        try
+            x_ref = value.(warm_start_model[:x])
+            # On ne passe que les variables entières x pour le warm start
+            for i in 1:n, k in 1:K
+                if x_ref[i, k] > 0.5 set_start_value(x[i, k], 1.0) else set_start_value(x[i, k], 0.0) end
+            end
+            if verbose; println("  🚀 Warm start injecté."); end
+        catch
+        end
     end
     
     optimize!(model)
     
     if verbose
-        print_solution(model, data, "Dualisation")
+        print_solution(model, data, "Dualisation (Optimisée)")
     end
     
     return model
@@ -728,7 +744,7 @@ end
 # ============================================================================
 
 function solve_cutting_planes(data::Instance; 
-                              max_iter::Int=150, 
+                              max_iter::Int=200, 
                               time_limit::Int=300,
                               gap_limit::Float64=0.01,
                               tol::Float64=1e-6,
@@ -737,11 +753,8 @@ function solve_cutting_planes(data::Instance;
                               verbose::Bool=false)
     if verbose
         println("\n" * "="^80)
-        println(" " ^ 25 * "MÉTHODE 2 : PLANS COUPANTS (ITÉRATIF)")
+        println(" " ^ 25 * "MÉTHODE 2 : PLANS COUPANTS (TIMEOUT SECURE)")
         println("="^80)
-        if use_heuristic
-            println("  ✓ Heuristiques activées pour les sous-problèmes")
-        end
     end
     
     n, K, B = data.n, data.K, data.B
@@ -749,13 +762,12 @@ function solve_cutting_planes(data::Instance;
     
     GRB_ENV = Gurobi.Env()
     model = Model(() -> Gurobi.Optimizer(GRB_ENV))
+    
     set_optimizer_attribute(model, "OutputFlag", verbose ? 1 : 0)
-
-    set_optimizer_attribute(model, "TimeLimit", time_limit)
     set_optimizer_attribute(model, "MIPGap", gap_limit)
     
     @variable(model, x[1:n, 1:K], Bin)
-    @variable(model, y[e in E], Bin)
+    @variable(model, 0 <= y[e in E] <= 1) 
     @variable(model, z >= 0)
     
     @objective(model, Min, z)
@@ -763,13 +775,17 @@ function solve_cutting_planes(data::Instance;
     @constraint(model, [i=1:n], sum(x[i,k] for k in 1:K) == 1)
     @constraint(model, [e in E, k in 1:K], y[e] >= x[e[1], k] + x[e[2], k] - 1)
     @constraint(model, [k=1:K], sum(data.w[i] * x[i,k] for i in 1:n) <= B)
-    
     @constraint(model, z >= sum(data.l[e] * y[e] for e in E))
     
     add_symmetry_breaking_constraints!(model, data)
     
-    if warm_start_model !== nothing
-        set_warm_start!(model, data, warm_start_model)
+    if warm_start_model !== nothing && has_values(warm_start_model)
+        try
+            x_ref = value.(warm_start_model[:x])
+            for i in 1:n, k in 1:K
+                if x_ref[i, k] > 0.5 set_start_value(x[i, k], 1.0) else set_start_value(x[i, k], 0.0) end
+            end
+        catch; end
     end
     
     cuts_obj = 0
@@ -779,23 +795,32 @@ function solve_cutting_planes(data::Instance;
     
     while iteration < max_iter
         iteration += 1
+        elapsed = time() - start_time
+        remaining = time_limit - elapsed
         
-        if time() - start_time > time_limit
-            if verbose
-                println("  ⏱️  Temps limite atteint à l'itération $iteration")
-            end
+        if remaining <= 0.5
+            if verbose; println("  ⏱️  Temps limite global atteint."); end
             break
         end
         
+        set_optimizer_attribute(model, "TimeLimit", remaining)
         optimize!(model)
         
-        if termination_status(model) != MOI.OPTIMAL
-            if verbose
-                println("  ⚠️  Statut non-optimal: $(termination_status(model))")
-            end
+        status = termination_status(model)
+        
+        if status == MOI.TIME_LIMIT
+            if verbose; println("  ⏱️  Timeout Gurobi atteint."); end
+            break 
+        end
+        
+        if status != MOI.OPTIMAL
             break
         end
         
+        if !has_values(model)
+            break
+        end
+
         x_val = value.(x)
         y_val = Dict(e => value(y[e]) for e in E)
         z_val = value(z)
@@ -812,10 +837,6 @@ function solve_cutting_planes(data::Instance;
             )
             cuts_added = true
             cuts_obj += 1
-            
-            if verbose && iteration % 10 == 0
-                println("  ➕ Itér $iteration: Coupe objectif ajoutée (violation: $(round(nominal_cost + worst_deviation - z_val, digits=4)))")
-            end
         end
         
         for k in 1:K
@@ -827,36 +848,64 @@ function solve_cutting_planes(data::Instance;
                 )
                 cuts_added = true
                 cuts_feas += 1
-                
-                if verbose && iteration % 10 == 0
-                    println("  ➕ Itér $iteration: Coupe faisabilité P$k ajoutée (violation: $(round(worst_weight - B, digits=4)))")
-                end
             end
         end
         
         if !cuts_added
-            if verbose
-                println("  ✅ Convergence atteinte à l'itération $iteration (aucune coupe à ajouter)")
-            end
+            if verbose; println("  ✅ Convergence atteinte à l'itération $iteration"); end
             break
         end
     end
     
-    optimize!(model)
-    
-    if verbose
-        println("\n  📊 Statistiques Plans Coupants:")
-        println("     - Itérations: $iteration")
-        println("     - Coupes objectif: $cuts_obj")
-        println("     - Coupes faisabilité: $cuts_feas")
-        println("     - Total coupes: $(cuts_obj + cuts_feas)")
+    # --- VÉRIFICATION FINALE DE LA ROBUSTESSE (POST-OPTIMIZATION) ---
+    if has_values(model)
+        x_val = value.(x)
+        y_val = Dict(e => value(y[e]) for e in E)
+        z_val_model = value(z)
         
-        print_solution(model, data, "Plans Coupants")
+        # 1. Vérification Stricte de la Faisabilité (Robustesse Poids)
+        is_robust_feasible = true
+        max_violation = 0.0
+        
+        for k in 1:K
+            # On utilise le check exact ici pour être sûr
+            worst_weight, _ = separation_feasibility(data, x_val, k, use_heuristic=false)
+            if worst_weight > B + 1e-5
+                is_robust_feasible = false
+                max_violation = max(max_violation, worst_weight - B)
+            end
+        end
+        
+        # 2. Calcul du Vrai Coût Robuste
+        nominal_cost = sum(data.l[e] * y_val[e] for e in E)
+        worst_dev, _ = separation_objective(data, y_val, use_heuristic=false)
+        true_robust_obj = nominal_cost + worst_dev
+        
+        if verbose
+            println("\n  🔍 VÉRIFICATION FINALE DE LA SOLUTION :")
+            if !is_robust_feasible
+                println("      SOLUTION NON RÉALISABLE (Violation incertitude poids : +$(round(max_violation, digits=3)))")
+                println("       La solution est rejetée car elle ne résiste pas au pire cas.")
+            else
+                println("      Solution Robustement Réalisable")
+                println("     Objectif Modèle (Borne Inf) : $(round(z_val_model, digits=4))")
+                println("      Vrai Coût Robuste (Calculé) : $(round(true_robust_obj, digits=4))")
+                
+                if z_val_model < true_robust_obj - 1e-4
+                    println("       Attention : Le modèle sous-estime le coût réel (écart dû au Timeout)")
+                end
+            end
+            
+            if is_robust_feasible
+                 print_solution(model, data, "Plans Coupants (Vérifié)")
+            end
+        end
+        
+       
     end
     
     return model
 end
-
 # ============================================================================
 # MÉTHODE 3 : Résolution Robuste par BRANCH-AND-CUT (Callbacks Lazy)
 # ============================================================================
@@ -865,12 +914,11 @@ function solve_branch_and_cut(data::Instance;
                               time_limit::Int=300,
                               gap_limit::Float64=0.01,
                               warm_start_model=nothing,
-                              use_heuristic::Bool=true,
+                              use_heuristic::Bool=true, # Essayez false si le problème persiste
                               verbose::Bool=false)
     if verbose
         println("\n" * "="^80)
-        println(" " ^ 25 * "MÉTHODE 3 : BRANCH-AND-CUT (OPTIMISÉ)")
-        println(" " ^ 20 * "(Lazy Constraints + User Cuts)" )
+        println(" " ^ 25 * "MÉTHODE 3 : BRANCH-AND-CUT (CORRIGÉ)")
         println("="^80)
     end
     
@@ -880,14 +928,10 @@ function solve_branch_and_cut(data::Instance;
     GRB_ENV = Gurobi.Env()
     model = Model(() -> Gurobi.Optimizer(GRB_ENV))
     
-    # --- CONFIGURATION GUROBI CRUCIALE ---
     set_optimizer_attribute(model, "OutputFlag", verbose ? 1 : 0)
     set_optimizer_attribute(model, "TimeLimit", time_limit)
     set_optimizer_attribute(model, "MIPGap", gap_limit)
-    
-    # ACTIVATION DU PRECRUSH : Indispensable pour que les User Cuts fonctionnent
     set_optimizer_attribute(model, "PreCrush", 1) 
-    # LazyConstraints : Indispensable pour la validité
     set_optimizer_attribute(model, "LazyConstraints", 1)
     
     @variable(model, x[1:n, 1:K], Bin)
@@ -896,124 +940,133 @@ function solve_branch_and_cut(data::Instance;
     
     @objective(model, Min, z)
     
-    # Contraintes statiques de base (Squelette du problème)
     @constraint(model, [i=1:n], sum(x[i,k] for k in 1:K) == 1)
     @constraint(model, [e in E, k in 1:K], y[e] >= x[e[1], k] + x[e[2], k] - 1)
-    
-    # Borne inférieure "faible" mais utile pour guider le solveur au début
     @constraint(model, z >= sum(data.l[e] * y[e] for e in E))
-    
-    # Capacité statique (condition nécessaire mais pas suffisante)
     @constraint(model, [k=1:K], sum(data.w[i] * x[i,k] for i in 1:n) <= B)
     
     add_symmetry_breaking_constraints!(model, data)
     
-    # --- GESTION INTELLIGENTE DU WARM START ---
     if warm_start_model !== nothing && has_values(warm_start_model)
         try
             x_ref = value.(warm_start_model[:x])
             y_ref = value.(warm_start_model[:y])
-            
-            # On injecte la solution partielle
             for i in 1:n, k in 1:K
                 if x_ref[i, k] > 0.5 set_start_value(x[i, k], 1.0) else set_start_value(x[i, k], 0.0) end
             end
             for e in E
                  if y_ref[e] > 0.5 set_start_value(y[e], 1.0) else set_start_value(y[e], 0.0) end
             end
-            
-            # ASTUCE : On ne fixe pas z à la valeur statique (qui est fausse en robuste),
-            # on laisse Gurobi calculer le z nécessaire ou on met une valeur haute.
-            println("  🚀 Warm start (structure x/y) injecté.")
-        catch e
-            println("  ⚠️ Erreur Warm Start: $e")
-        end
+        catch; end
     end
     
-    cuts_count = [0, 0] # [Objectif, Faisabilité]
+    cuts_count = [0, 0] # [Lazy, User]
 
-    # --- CALLBACK UNIFIÉ ---
-    function my_callback_function(cb_data)
-        status = callback_node_status(cb_data, model)
+    # --- FONCTION DE SÉPARATION (CORRIGÉE) ---
+    function find_violated_cuts(x_val, y_val, z_val, tolerance)
+        violated_cuts = [] 
         
-        # On traite :
-        # 1. INTEGER : Solutions entières candidates (Lazy Constraints - OBLIGATOIRE)
-        # 2. FRACTIONAL : Solutions en cours de relaxation (User Cuts - PERFORMANCE)
-        is_integer = (status == MOI.CALLBACK_NODE_STATUS_INTEGER)
-        is_fractional = (status == MOI.CALLBACK_NODE_STATUS_FRACTIONAL)
+        # 1. Objectif (Robustesse des distances)
+        nominal_cost = sum(data.l[e] * y_val[e] for e in E)
+        worst_deviation, δ_obj = separation_objective(data, y_val, use_heuristic=use_heuristic)
         
-        if !is_integer && !is_fractional
+        if nominal_cost + worst_deviation > z_val + tolerance
+            push!(violated_cuts, (:obj, δ_obj))
+        end
+        
+        # 2. Faisabilité (Robustesse des poids)
+        for k in 1:K
+            # Calcul du poids nominal actuel de la partition k
+            current_weight = sum(data.w[i] * x_val[i,k] for i in 1:n)
+            
+            # CORRECTION : On vérifie TOUJOURS si la partition n'est pas vide (ou presque)
+            # On a retiré le "current_weight > B * 0.5" qui était dangereux
+            if current_weight > 1e-6 
+                worst_weight, δ_feas = separation_feasibility(data, x_val, k, use_heuristic=use_heuristic)
+                
+                if worst_weight > B + tolerance
+                    push!(violated_cuts, (:feas, (k, δ_feas)))
+                end
+            end
+        end
+        
+        return violated_cuts
+    end
+
+    # --- CALLBACK LAZY (Validité Entière) ---
+    function lazy_cb(cb_data)
+        if callback_node_status(cb_data, model) != MOI.CALLBACK_NODE_STATUS_INTEGER
             return
         end
         
-        # Récupération des valeurs (entières ou fractionnaires)
         x_val = callback_value.(cb_data, x)
         y_val = Dict(e => callback_value(cb_data, y[e]) for e in E)
         z_val = callback_value(cb_data, z)
         
-        # Tolérance : plus stricte pour les entiers, plus lâche pour les fractionnaires (pour éviter de surcharger)
-        tol = is_integer ? 1e-6 : 1e-4 
+        # Tolérance stricte
+        cuts = find_violated_cuts(x_val, y_val, z_val, 1e-6)
         
-        # 1. SÉPARATION DE L'OBJECTIF
-        nominal_cost = sum(data.l[e] * y_val[e] for e in E)
-        # Optimisation : n'appeler l'heuristique que si z est "proche" du coût nominal
-        # sinon on sait déjà qu'on va violer
-        
-        worst_deviation, δ_obj = separation_objective(data, y_val, use_heuristic=use_heuristic)
-        
-        robust_obj = nominal_cost + worst_deviation
-        
-        if robust_obj > z_val + tol
-            con = @build_constraint(
-                z >= sum(data.l[e] * y[e] for e in E) +
-                     sum((data.l_hat[e[1]] + data.l_hat[e[2]]) * y[e] * δ_obj[e] for e in E)
-            )
-            
-            if is_integer
+        for (type, data_cut) in cuts
+            if type == :obj
+                δ_obj = data_cut
+                con = @build_constraint(
+                    z >= sum(data.l[e] * y[e] for e in E) +
+                         sum((data.l_hat[e[1]] + data.l_hat[e[2]]) * y[e] * δ_obj[e] for e in E)
+                )
                 MOI.submit(model, MOI.LazyConstraint(cb_data), con)
                 cuts_count[1] += 1
-            else
-                MOI.submit(model, MOI.UserCut(cb_data), con)
-                # On ne compte pas les User Cuts dans le total final pour ne pas fausser les stats
+            elseif type == :feas
+                (k, δ_feas) = data_cut
+                con = @build_constraint(
+                    sum(data.w[i] * x[i,k] * (1 + δ_feas[i]) for i in 1:n) <= B
+                )
+                MOI.submit(model, MOI.LazyConstraint(cb_data), con)
+                cuts_count[1] += 1
             end
         end
+    end
+
+    # --- CALLBACK USER (Performance Fractionnaire) ---
+    function user_cb(cb_data)
+        if callback_node_status(cb_data, model) != MOI.CALLBACK_NODE_STATUS_FRACTIONAL
+            return
+        end
         
-        # 2. SÉPARATION DE LA FAISABILITÉ
-        for k in 1:K
-            # Petit filtre : si la somme des poids statiques est déjà loin de B, inutile de vérifier le robuste
-            # (Optimisation simple)
-            current_static_weight = sum(data.w[i] * x_val[i,k] for i in 1:n)
-            
-            # On sépare seulement si on est potentiellement proche de la limite
-            if current_static_weight > B * 0.5 
-                worst_weight, δ_feas = separation_feasibility(data, x_val, k, use_heuristic=use_heuristic)
-                
-                if worst_weight > B + tol
-                    con = @build_constraint(
-                        sum(data.w[i] * x[i,k] * (1 + δ_feas[i]) for i in 1:n) <= B
-                    )
-                    
-                    if is_integer
-                        MOI.submit(model, MOI.LazyConstraint(cb_data), con)
-                        cuts_count[2] += 1
-                    else
-                        MOI.submit(model, MOI.UserCut(cb_data), con)
-                    end
-                end
+        x_val = callback_value.(cb_data, x)
+        y_val = Dict(e => callback_value(cb_data, y[e]) for e in E)
+        z_val = callback_value(cb_data, z)
+        
+        cuts = find_violated_cuts(x_val, y_val, z_val, 1e-4)
+        
+        for (type, data_cut) in cuts
+            if type == :obj
+                δ_obj = data_cut
+                con = @build_constraint(
+                    z >= sum(data.l[e] * y[e] for e in E) +
+                         sum((data.l_hat[e[1]] + data.l_hat[e[2]]) * y[e] * δ_obj[e] for e in E)
+                )
+                MOI.submit(model, MOI.UserCut(cb_data), con)
+                cuts_count[2] += 1
+            elseif type == :feas
+                (k, δ_feas) = data_cut
+                con = @build_constraint(
+                    sum(data.w[i] * x[i,k] * (1 + δ_feas[i]) for i in 1:n) <= B
+                )
+                MOI.submit(model, MOI.UserCut(cb_data), con)
+                cuts_count[2] += 1
             end
         end
     end
     
-    # Enregistrement des callbacks
-    MOI.set(model, MOI.LazyConstraintCallback(), my_callback_function)
-    MOI.set(model, MOI.UserCutCallback(), my_callback_function)
+    MOI.set(model, MOI.LazyConstraintCallback(), lazy_cb)
+    MOI.set(model, MOI.UserCutCallback(), user_cb)
     
     optimize!(model)
     
     if verbose
         println("\n  📊 Statistiques Branch-and-Cut:")
-        println("     - Coupes Lazy générées (Entier): $(sum(cuts_count))")
-        
+        println("     - Lazy Constraints (Validité): $(cuts_count[1])")
+        println("     - User Cuts (Performance):     $(cuts_count[2])")
         print_solution(model, data, "Branch-and-Cut")
     end
     
@@ -1079,7 +1132,6 @@ function solve_heuristic(data::Instance; verbose::Bool=false)
         part_i = findfirst(p -> i in p, partitions)
         part_j = findfirst(p -> j in p, partitions)
         
-        # Si un nœud n'est pas assigné, on considère qu'il est isolé (ou on penalise)
         if part_i !== nothing && part_j !== nothing && part_i != part_j
             objective_val += data.l[e]
         end
@@ -1132,7 +1184,6 @@ function solve_heuristic(data::Instance; verbose::Bool=false)
     
     @objective(model, Min, sum(data.l[e] * y[e] for e in E))
     
-    # --- CORRECTION 2 : Appel obligatoire à optimize! ---
     optimize!(model) 
     
     return model
@@ -1147,7 +1198,7 @@ function main_comparative(filepath::String;
                           time_limit::Int=300,
                           gap_limit::Float64=0.01,
                           use_heuristic::Bool=true,
-                          generate_plots::Bool=true) # ← Nouveau paramètre
+                          generate_plots::Bool=true)
     
     println("\n" * "╔" * "="^98 * "╗")
     println("║" * " "^30 * "PARTITIONNEMENT ROBUSTE DE GRAPHE" * " "^35 * "║")
@@ -1163,7 +1214,7 @@ function main_comparative(filepath::String;
     # Lecture de l'instance
     instance = read_instance_file(filepath)
     
-    # Dictionnaire pour stocker les résultats: (objectif, temps, gap, statut)
+    # Dictionnaire pour stocker les résultats
     results = Dict{String, Tuple{Float64, Float64, Float64, MOI.TerminationStatusCode}}()
     
     # -------------------------------------------------------------------------
@@ -1195,7 +1246,7 @@ function main_comparative(filepath::String;
     t_heur = time() - t_start
     
     obj_heur = has_values(model_heur) ? objective_value(model_heur) : Inf
-    gap_heur = Inf # Pas de gap prouvé pour une heuristique pure
+    gap_heur = Inf 
     status_heur = termination_status(model_heur)
     
     results["Heuristique"] = (obj_heur, t_heur, gap_heur, status_heur)
@@ -1275,34 +1326,48 @@ function main_comparative(filepath::String;
         try
             println("\n📊 Génération des graphiques...")
             base_name = splitext(basename(filepath))[1]
-            
-            # Profil de performance simplifié (Temps)
             plot_performance_profile_single(results, "perf_$(base_name).png")
-            
-            # Comparaison Barres (Temps vs Objectif)
             plot_comparative_bar_chart(results, "bars_$(base_name).png")
         catch e
             println("⚠️ Erreur lors de la génération des graphiques: $e")
         end
     end
     
-    # Recommandations
-    println("\n💡 Analyse:")
+    # -------------------------------------------------------------------------
+    # ANALYSE ET MEILLEURE SOLUTION 
+    # -------------------------------------------------------------------------
+    println("\n💡 Analyse Rapide:")
     robust_methods = ["Dualisation", "Plans Coupants", "Branch-and-Cut"]
-    valid_robust = [m for m in robust_methods if results[m][1] < Inf]
+    valid_robust = [m for m in robust_methods if haskey(results, m) && results[m][1] < Inf]
     
     if !isempty(valid_robust)
-        best_obj = minimum([results[m][1] for m in valid_robust])
-        fastest_time = minimum([results[m][2] for m in valid_robust])
+        # On trie d'abord par objectif (min), puis par temps (min)
+        best_method = sort(valid_robust, by = m -> (results[m][1], results[m][2]))[1]
         
-        for m in valid_robust
-            obj, t, _, _ = results[m]
-            if obj <= best_obj * 1.0001 && t <= fastest_time * 1.1
-                println("   🏆 $m semble être la meilleure méthode ici (Rapide & Optimale).")
-            elseif obj <= best_obj * 1.0001
-                println("   ⭐ $m a trouvé la solution optimale.")
-            end
+        println("\n" * "★"^80)
+        println("   🏆 MEILLEURE SOLUTION ROBUSTE TROUVÉE (Gagnant : $best_method)")
+        println("★"^80)
+        
+        # Récupération du modèle correspondant
+        best_model = nothing
+        if best_method == "Dualisation"
+            best_model = model_dual
+        elseif best_method == "Plans Coupants"
+            best_model = model_cp
+        elseif best_method == "Branch-and-Cut"
+            best_model = model_bc
         end
+        
+        # Affichage propre de la solution
+        if best_model !== nothing
+            print_solution(best_model, instance, best_method)
+        else
+            println("Erreur technique : Modèle introuvable.")
+        end
+        println("★"^80 * "\n")
+        
+    else
+        println("⚠️ Aucune méthode robuste n'a trouvé de solution valide.")
     end
 
     return results
@@ -1347,7 +1412,6 @@ function get_solution_string(model, data)
     end
 end
 
-# --- FONCTION PRINCIPALE BLINDÉE ---
 function benchmark_multiple_instances(instance_files::Vector{String};
                                      time_limit::Int=300,
                                      gap_limit::Float64=0.01,
@@ -1360,9 +1424,8 @@ function benchmark_multiple_instances(instance_files::Vector{String};
     
     mkpath(output_dir)
     
-    # 1. CRÉATION DU FICHIER DE SAUVEGARDE CSV (Le filet de sécurité)
     csv_filename = joinpath(output_dir, "backup_live_data.csv")
-    println("  💾 Fichier de sauvegarde temps réel : $csv_filename")
+    println("   Fichier de sauvegarde temps réel : $csv_filename")
     
     # On initialise le fichier CSV avec les en-têtes (si le fichier n'existe pas)
     # On utilise ';' comme séparateur pour éviter les problèmes avec les virgules des partitions
@@ -1372,7 +1435,6 @@ function benchmark_multiple_instances(instance_files::Vector{String};
         end
     end
 
-    # Préparation des conteneurs pour l'Excel final
     excel_instances = String[]
     excel_methods = String[]
     excel_status = String[]
@@ -1405,7 +1467,7 @@ function benchmark_multiple_instances(instance_files::Vector{String};
             ]
             
             for (method_name, solver_func) in methods_to_test
-                print("  ⏳ $method_name... ")
+                print("   $method_name... ")
                 flush(stdout)
                 
                 t_start = time()
@@ -1450,7 +1512,7 @@ function benchmark_multiple_instances(instance_files::Vector{String};
                     println("\n  ✗ Erreur exécution: $e")
                     final_status = "CRASH_CODE"
                     final_time = time() - t_start
-                    final_sol = "Erreur: $(replace(string(e), "\n" => " "))" # Retire les sauts de ligne pour le CSV
+                    final_sol = "Erreur: $(replace(string(e), "\n" => " "))" 
                 end
                 
                 # Ajout aux résultats pour le graphique
@@ -1459,13 +1521,11 @@ function benchmark_multiple_instances(instance_files::Vector{String};
                 # --- SAUVEGARDE IMMÉDIATE DANS LE CSV (Le plus important) ---
                 try
                     open(csv_filename, "a") do file
-                        # On remplace les ; par des , dans la solution pour ne pas casser le CSV
                         clean_sol = replace(final_sol, ";" => ",")
-                        # Ecriture : Instance;Methode;Statut;Temps;Obj;Gap;Sol
                         println(file, "$inst_name;$method_name;$final_status;$final_time;$final_obj;$final_gap;$clean_sol")
                     end
                 catch e_csv
-                    println("  ⚠️ Echec écriture CSV: $e_csv")
+                    println("   Echec écriture CSV: $e_csv")
                 end
                 
                 # Stockage en mémoire pour Excel
@@ -1479,31 +1539,29 @@ function benchmark_multiple_instances(instance_files::Vector{String};
             end
             
         catch e
-            println("  ⚠️  Erreur chargement instance: $e")
+            println("    Erreur chargement instance: $e")
         end
     end
     
     # --- GÉNÉRATION EXCEL FINALE (Avec correction Char -> String) ---
     excel_filename = joinpath(output_dir, "benchmark_final.xlsx")
     println("\n" * "="^80)
-    println("  💾 Génération de l'Excel final : $excel_filename")
+    println("   Génération de l'Excel final : $excel_filename")
     
     try
-        # Astuce : string.() force la conversion de tout (Char, Int, SubString) en String pure
         XLSX.writetable(excel_filename, 
             instances = string.(excel_instances),
             methodes = string.(excel_methods),
             statut = string.(excel_status),
             temps_s = excel_time,
-            objectif = string.(excel_objective), # Convertit aussi les "N/A" et nombres en string pour uniformiser
-            gap_pct = string.(excel_gap),        # Evite l'erreur sur les '-' (Char)
+            objectif = string.(excel_objective), 
+            gap_pct = string.(excel_gap),        
             details_solution = string.(excel_solution),
             overwrite = true
         )
         println("  ✅ Excel créé avec succès !")
     catch e
-        println("  ❌ Erreur création Excel: $e")
-        println("  👉 PAS DE PANIQUE : Toutes vos données sont dans 'backup_live_data.csv'")
+        println("   données sont crées 'backup_live_data.csv'")
     end
 
     # Graphiques
@@ -1522,17 +1580,27 @@ end
 # EXÉCUTION
 # ============================================================================
 # Exemple 1: Une seule instance
-
 results = main_comparative(
     "data/data/10_ulysses_3.tsp",
-    time_limit=200,        
-    gap_limit=0.09,
+    time_limit=180,        
+    gap_limit=0.1,
     use_heuristic=true,
     generate_plots=false
 )
 """
 # Exemple 2: Benchmark sur plusieurs instances (décommenter pour utiliser)
-instance_files = [
+instance_files =instance_files = [
+    
+
+    "data/data/10_ulysses_3.tsp",
+    "data/data/14_burma_3.tsp",
+    "data/data/22_ulysses_3.tsp",
+    "data/data/26_eil_3.tsp",
+    "data/data/30_eil_3.tsp",
+    "data/data/34_pr_3.tsp",
+    "data/data/38_rat_3.tsp",
+    "data/data/40_eil_3.tsp",
+ 
     "data/data/44_lin_3.tsp",
     "data/data/48_att_3.tsp",
     "data/data/52_berlin_3.tsp",
@@ -1542,27 +1610,36 @@ instance_files = [
     "data/data/202_gr_3.tsp",
     "data/data/318_lin_3.tsp",
     "data/data/400_rd_3.tsp",
-    "data/data/532_att_3.tsp",
-]
- 
- all_results = benchmark_multiple_instances(
-     instance_files,
-     time_limit=100,
-     gap_limit=0.05,
-     use_heuristic=true,
-     output_dir="benchmark_results"
- )
 
-"""
- """
- "data/data/10_ulysses_6.tsp",
+    "data/data/10_ulysses_6.tsp",
     "data/data/14_burma_6.tsp",
     "data/data/22_ulysses_6.tsp",
     "data/data/26_eil_6.tsp",
     "data/data/30_eil_6.tsp",
     "data/data/34_pr_6.tsp",
     "data/data/38_rat_6.tsp",
-    "data/data/40_eil_3.tsp",
- 
     "data/data/40_eil_6.tsp",
-"""
+ 
+    "data/data/44_lin_6.tsp",
+    "data/data/48_att_6.tsp",
+    "data/data/52_berlin_6.tsp",
+    "data/data/70_st_6.tsp",
+    "data/data/80_gr_6.tsp",
+    "data/data/100_kroA_6.tsp",
+    "data/data/202_gr_6.tsp",
+    "data/data/318_lin_6.tsp",
+    "data/data/400_rd_6.tsp",
+
+]
+
+all_results = benchmark_multiple_instances(
+     instance_files,
+     time_limit=40,
+     gap_limit=0.1,
+     use_heuristic=true,
+     output_dir="benchmark_results"
+ )
+
+
+
+
