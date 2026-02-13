@@ -7,6 +7,8 @@ using Printf
 using Plots
 using Pkg
 using XLSX
+using JuMP
+using Dates
 # ============================================================================
 # Structure de données pour l'instance
 # ============================================================================
@@ -236,8 +238,6 @@ function plot_performance_profile(all_results::Dict, output_file::String="perfor
             # On ajoute le temps de l'instance courante au total
             new_cumul = current_cumul + t
             
-            # Marche d'escalier :
-            # Au temps 'new_cumul', on passe de i-1 à i instances résolues
             
             push!(xs, new_cumul) # Point en bas de la marche (temps atteint, pas encore compté)
             push!(ys, i-1)
@@ -979,8 +979,6 @@ function solve_branch_and_cut(data::Instance;
             # Calcul du poids nominal actuel de la partition k
             current_weight = sum(data.w[i] * x_val[i,k] for i in 1:n)
             
-            # CORRECTION : On vérifie TOUJOURS si la partition n'est pas vide (ou presque)
-            # On a retiré le "current_weight > B * 0.5" qui était dangereux
             if current_weight > 1e-6 
                 worst_weight, δ_feas = separation_feasibility(data, x_val, k, use_heuristic=use_heuristic)
                 
@@ -1074,19 +1072,14 @@ function solve_branch_and_cut(data::Instance;
 end
 
 # ============================================================================
-# MÉTHODE 4 : HEURISTIQUE RAPIDE (NOUVELLE)
+# MÉTHODE 4 : HEURISTIQUE RAPIDE
 # ============================================================================
 
-"""
-    solve_heuristic(data::Instance; verbose::Bool=false)
 
-Heuristique constructive rapide pour obtenir une solution initiale.
-Utilise une stratégie gloutonne basée sur les poids des nœuds.
-"""
 function solve_heuristic(data::Instance; verbose::Bool=false)
     if verbose
         println("\n" * "="^80)
-        println(" " ^ 25 * "MÉTHODE 4 : HEURISTIQUE RAPIDE ")
+        println(" " ^ 25 * "MÉTHODE 4 : HEURISTIQUE RAPIDE (CORRIGÉE)")
         println("="^80)
     end
     
@@ -1101,6 +1094,7 @@ function solve_heuristic(data::Instance; verbose::Bool=false)
     partitions = [Int[] for _ in 1:K]
     partition_weights = zeros(Float64, K)
     
+    # --- CORRECTION 1 : Logique d'affectation robuste ---
     for node in nodes_sorted
         assigned = false
         
@@ -1124,6 +1118,7 @@ function solve_heuristic(data::Instance; verbose::Bool=false)
         end
     end
     
+    # Calcul manuel de l'objectif pour affichage
     objective_val = 0.0
     for e in E
         i, j = e
@@ -1186,7 +1181,6 @@ function solve_heuristic(data::Instance; verbose::Bool=false)
     
     return model
 end
-
 # ============================================================================
 # FONCTION PRINCIPALE COMPARATIVE 
 # ============================================================================
@@ -1574,70 +1568,287 @@ function benchmark_multiple_instances(instance_files::Vector{String};
     return all_results
 end
 
+
+
+
 # ============================================================================
-# EXÉCUTION
+# 1. FONCTION DE TRAÇAGE : Courbe d'Efficacité Cumulée
 # ============================================================================
-# Exemple 1: Une seule instance
-results = main_comparative(
-    "data/data/10_ulysses_3.tsp",
-    time_limit=180,        
-    gap_limit=0.1,
-    use_heuristic=true,
-    generate_plots=false
-)
+
 """
-# Exemple 2: Benchmark sur plusieurs instances (décommenter pour utiliser)
-instance_files =instance_files = [
+    plot_cumulative_solved(results_data, time_budget, output_file="profil_resolution.png")
+
+Trace le nombre d'instances résolues (Axe Y) en fonction du temps cumulé (Axe X).
+Chaque méthode a sa propre courbe en escalier.
+"""
+function plot_cumulative_solved(results_data::Dict, time_budget::Real, output_file::String="profil_resolution.png")
     
+    p = plot(
+        title  = "Instances Résolues vs Temps Cumulé",
+        xlabel = "Temps Global (s)",
+        ylabel = "Nombre d'instances résolues",
+        legend = :bottomright,
+        xlims  = (0, time_budget * 1.05),
+        size   = (900, 600),
+        grid   = true,
+        framestyle = :box
+    )
 
-    "data/data/10_ulysses_3.tsp",
-    "data/data/14_burma_3.tsp",
-    "data/data/22_ulysses_3.tsp",
-    "data/data/26_eil_3.tsp",
-    "data/data/30_eil_3.tsp",
-    "data/data/34_pr_3.tsp",
-    "data/data/38_rat_3.tsp",
-    "data/data/40_eil_3.tsp",
- 
-    "data/data/44_lin_3.tsp",
-    "data/data/48_att_3.tsp",
-    "data/data/52_berlin_3.tsp",
-    "data/data/70_st_3.tsp",
-    "data/data/80_gr_3.tsp",
-    "data/data/100_kroA_3.tsp",
-    "data/data/202_gr_3.tsp",
-    "data/data/318_lin_3.tsp",
-    "data/data/400_rd_3.tsp",
+    colors = [:blue, :green, :orange, :purple, :red]
+    methods = sort(collect(keys(results_data)))
+    
+    max_y = 0
 
-    "data/data/10_ulysses_6.tsp",
-    "data/data/14_burma_6.tsp",
-    "data/data/22_ulysses_6.tsp",
-    "data/data/26_eil_6.tsp",
-    "data/data/30_eil_6.tsp",
-    "data/data/34_pr_6.tsp",
-    "data/data/38_rat_6.tsp",
-    "data/data/40_eil_6.tsp",
- 
-    "data/data/44_lin_6.tsp",
-    "data/data/48_att_6.tsp",
-    "data/data/52_berlin_6.tsp",
-    "data/data/70_st_6.tsp",
-    "data/data/80_gr_6.tsp",
-    "data/data/100_kroA_6.tsp",
-    "data/data/202_gr_6.tsp",
-    "data/data/318_lin_6.tsp",
-    "data/data/400_rd_6.tsp",
+    for (idx, method) in enumerate(methods)
+        # data est un vecteur de tuples : (Temps_Instance, Est_Resolue)
+        # On doit le transformer en temps cumulé pour les succès
+        data = results_data[method]
+        
+        cumulative_time = 0.0
+        solved_count = 0
+        
+        # Points pour le graphique (x, y)
+        xs = Float64[0.0]
+        ys = Int[0]
 
-]
+        for (t_inst, is_solved) in data
+            cumulative_time += t_inst
+            
+            # Si on dépasse le budget global, on arrête le tracé là
+            if cumulative_time > time_budget
+                push!(xs, time_budget)
+                push!(ys, ys[end])
+                break
+            end
 
-all_results = benchmark_multiple_instances(
-     instance_files,
-     time_limit=40,
-     gap_limit=0.1,
-     use_heuristic=true,
-     output_dir="benchmark_results"
- )
+            # On avance dans le temps (horizontalement)
+            push!(xs, cumulative_time)
+            push!(ys, solved_count) # On reste au niveau précédent avant de monter
 
+            if is_solved
+                solved_count += 1
+                # On monte une marche (verticalement)
+                push!(xs, cumulative_time)
+                push!(ys, solved_count)
+            end
+        end
 
+        # Prolonger jusqu'à la fin du budget si la méthode a fini toutes les instances avant
+        if !isempty(xs) && xs[end] < time_budget
+            push!(xs, time_budget)
+            push!(ys, ys[end])
+        end
 
+        max_y = max(max_y, solved_count)
 
+        plot!(p, xs, ys, 
+              label = "$method ($solved_count résolues)", 
+              linewidth = 2.5,
+              color = colors[mod1(idx, length(colors))],
+              linestyle = :solid) # ou :step
+    end
+    
+    # Ajuster l'axe Y pour avoir des entiers
+    plot!(p, yticks = 0:max(1, max_y+1))
+
+    savefig(p, output_file)
+    println("   📊 Graphique généré : $output_file")
+end
+
+# ============================================================================
+# 2. FONCTION PRINCIPALE : Benchmark "Budget Global"
+# ============================================================================
+
+"""
+    benchmark_global_budget(instance_files; global_time_limit=1800, gap_limit=0.01)
+
+Parcourt les MÉTHODES une par une. Pour chaque méthode, on lui donne un budget global.
+Elle tente de résoudre les instances à la chaîne.
+"""
+
+function benchmark_global_budget(instance_files::Vector{String};
+                                 global_time_limit::Int=1800, # ex: 30 minutes TOTALES par méthode
+                                 gap_limit::Float64=0.01,
+                                 output_dir::String="benchmark_budget")
+    
+    mkpath(output_dir)
+    timestamp = Dates.format(now(), "yyyy-mm-dd_HHMM")
+    
+    println("\n" * "╔" * "="^90 * "╗")
+    println("║" * " "^25 * "BENCHMARK : BUDGET GLOBAL PAR MÉTHODE" * " "^28 * "║")
+    println("╚" * "="^90 * "╝")
+    println(" ⏱️  Budget par méthode : $(global_time_limit) s ($(round(global_time_limit/60, digits=1)) min)")
+    println(" 📂 Instances à traiter : $(length(instance_files))")
+    
+    # 1. Définition des tâches
+    solvers = [
+        ("Statique",       (inst, t) -> solve_static(inst, time_limit=t, gap_limit=gap_limit)),
+        ("Heuristique",    (inst, t) -> solve_heuristic(inst)), # Heuristique souvent < 1s
+        ("Dualisation",    (inst, t) -> solve_robust_dualization(inst, time_limit=t, gap_limit=gap_limit)),
+        ("Plans Coupants", (inst, t) -> solve_cutting_planes(inst, time_limit=t, gap_limit=gap_limit, use_heuristic=true)),
+        ("Branch-and-Cut", (inst, t) -> solve_branch_and_cut(inst, time_limit=t, gap_limit=gap_limit, use_heuristic=true))
+    ]
+
+    # Structures de stockage
+    results_for_plot = Dict{String, Vector{Tuple{Float64, Bool}}}()
+    
+    # Excel Data Arrays
+    xls_methode = String[]
+    xls_instance = String[]
+    xls_statut = String[]
+    xls_temps_inst = Float64[]
+    xls_temps_cumul = Float64[]
+    xls_obj = Any[]
+    xls_gap = Any[]
+
+    csv_file = joinpath(output_dir, "log_live_$(timestamp).csv")
+    open(csv_file, "w") do f; println(f, "Methode;Instance;Statut;Temps_Instance;Temps_Cumule;Objectif;Gap"); end
+
+    # --- BOUCLE PRINCIPALE : PAR MÉTHODE ---
+    for (method_name, solver_func) in solvers
+        println("\n" * "█"^92)
+        println(" 🔹 DÉMARRAGE MÉTHODE : $method_name")
+        println("█"^92)
+        
+        # Initialisation du chrono global pour CETTE méthode
+        global_start_time = time()
+        cumulative_elapsed = 0.0
+        solved_count = 0
+        
+        results_for_plot[method_name] = []
+
+        @printf "%-25s | %-12s | %-10s | %-10s | %-10s\n" "Instance" "Statut" "T. Inst" "T. Cumul" "Obj"
+        println("-"^92)
+
+        # --- BOUCLE SECONDAIRE : PAR INSTANCE ---
+        for filepath in instance_files
+            inst_name = basename(filepath)
+            
+            # 1. Vérification du budget restant
+            current_elapsed = time() - global_start_time
+            remaining_time = global_time_limit - current_elapsed
+            
+            # Si moins de 1 seconde restante, on arrête cette méthode
+            if remaining_time < 1.0
+                println(" ⚠️ Temps écoulé pour $method_name (Timeout Global). Arrêt des instances.")
+                break
+            end
+
+            limit_for_instance = floor(Int, remaining_time)
+            
+            t0_instance = time()
+            status_code = MOI.OTHER_ERROR
+            obj = Inf
+            gap = Inf
+            is_solved = false
+            
+            # --- CORRECTION ICI : Initialisation de t_instance AVANT le try ---
+            t_instance = 0.0 
+            
+            try
+                instance = read_instance_file(filepath) 
+                
+                # APPEL DU SOLVEUR
+                model = solver_func(instance, limit_for_instance)
+                
+                # Analyse résultats
+                status_code = termination_status(model)
+                t_instance = time() - t0_instance
+                
+                if has_values(model)
+                    obj = objective_value(model)
+                    try
+                        val_gap = MOI.get(model, MOI.RelativeGap())
+                        gap = (val_gap > 1e10) ? Inf : val_gap
+                    catch; end
+                    
+                    # CRITÈRE DE SUCCÈS
+                    if status_code == MOI.OPTIMAL || (gap <= gap_limit)
+                        is_solved = true
+                        solved_count += 1
+                    end
+                end
+
+            catch e
+                t_instance = time() - t0_instance
+                println("   ❌ Erreur exécution $inst_name : $e")
+            end
+            
+            # Mise à jour du temps cumulé RÉEL
+            cumulative_elapsed = time() - global_start_time
+            
+            # Stockage Graphique
+            push!(results_for_plot[method_name], (t_instance, is_solved))
+            
+            # Affichage console
+            status_str = is_solved ? "✅ RÉSOLU" : "❌ ÉCHEC"
+            obj_str = (obj == Inf) ? "-" : @sprintf("%.2f", obj)
+            @printf "%-25s | %-12s | %-10.2f | %-10.2f | %-10s\n" inst_name status_str t_instance cumulative_elapsed obj_str
+            
+            # Stockage Excel/CSV
+            push!(xls_methode, method_name)
+            push!(xls_instance, inst_name)
+            push!(xls_statut, string(status_code))
+            push!(xls_temps_inst, t_instance)
+            push!(xls_temps_cumul, cumulative_elapsed)
+            push!(xls_obj, obj)
+            push!(xls_gap, gap)
+            
+            open(csv_file, "a") do f
+                println(f, "$method_name;$inst_name;$status_code;$t_instance;$cumulative_elapsed;$obj;$gap")
+            end
+        end
+        
+        println(" >> Bilan $method_name : $solved_count instances résolues en $(round(cumulative_elapsed, digits=1)) s")
+    end
+
+    # --- GÉNÉRATION FICHIERS FINAUX ---
+    println("\n" * "="^90)
+    println(" 💾 Sauvegarde des résultats...")
+
+    # 1. Excel
+    excel_path = joinpath(output_dir, "benchmark_budget_$(timestamp).xlsx")
+    try
+        XLSX.writetable(excel_path, 
+            Methode      = xls_methode,
+            Instance     = xls_instance,
+            Statut       = xls_statut,
+            Temps_Inst   = xls_temps_inst,
+            Temps_Cumul  = xls_temps_cumul,
+            Objectif     = xls_obj,
+            Gap          = xls_gap,
+            overwrite = true
+        )
+        println(" ✅ Excel créé : $excel_path")
+    catch e
+        println(" ⚠️ Erreur Excel : $e")
+    end
+
+    # 2. Graphique
+    try
+        plot_path = joinpath(output_dir, "courbe_resolution_$(timestamp).png")
+        plot_cumulative_solved(results_for_plot, global_time_limit, plot_path)
+    catch e
+        println(" ⚠️ Erreur Graphique : $e")
+    end
+
+    return results_for_plot
+end
+
+# 1. Définir tes fichiers (Assure-toi de l'ordre !)
+# Exemple : on prend tout le dossier et on trie par taille de fichier (souvent corrélé à la difficulté)
+dir = "data/data"
+files = readdir(dir, join=true)
+instances = filter(x -> endswith(x, ".tsp"), files)
+
+# Fonction simple pour trier par taille (n=10 avant n=100)
+# On extrait le nombre après le dernier '/' et avant '_' (ex: 10_ulysses -> 10)
+function get_size(path)
+    name = basename(path)
+    m = match(r"(\d+)_", name)
+    return m === nothing ? 9999 : parse(Int, m.captures[1])
+end
+sort!(instances, by=get_size)
+
+# 2. Lancer le benchmark (30 minutes = 1800 secondes par méthode)
+benchmark_global_budget(instances, global_time_limit=1440, gap_limit=0.06)
